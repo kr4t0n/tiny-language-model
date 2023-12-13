@@ -24,7 +24,7 @@ args_parser.add_argument("--weight_decay", type=float, default=1e-3)
 args_parser.add_argument("--num_epochs", type=int, default=10)
 args_parser.add_argument("--batch_size", type=int, default=32)
 args_parser.add_argument("--log_interval", type=int, default=10)
-args_parser.add_argument("--ckpt_interval", type=int, default=10000)
+args_parser.add_argument("--ckpt_interval", type=int, default=1000)
 args = args_parser.parse_args()
 
 
@@ -86,6 +86,8 @@ def main():
 
             if step % args.ckpt_interval == 0:
                 accelerator.save_state(output_dir=f"ckpt-{step}")
+
+    accelerator.save_model(model, "tlm-pro")
 
     wandb.unwatch(model)
     wandb.finish()
