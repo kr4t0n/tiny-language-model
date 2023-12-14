@@ -1,6 +1,7 @@
 import torch
 import wandb
 import argparse
+import os.path as osp
 
 from dataclasses import dataclass
 from accelerate import Accelerator
@@ -25,6 +26,7 @@ args_parser.add_argument("--num_epochs", type=int, default=10)
 args_parser.add_argument("--batch_size", type=int, default=32)
 args_parser.add_argument("--log_interval", type=int, default=10)
 args_parser.add_argument("--ckpt_interval", type=int, default=1000)
+args_parser.add_argument("--output_dir", type=str, default="./")
 args = args_parser.parse_args()
 
 
@@ -40,6 +42,7 @@ def main():
         dataset,
         collate_fn=data_collator,
         batch_size=args.batch_size,
+        num_workers=4,
     )
 
     model = TLM(
@@ -85,9 +88,11 @@ def main():
                 wandb.log({"train_loss": loss.item()}, step=step)
 
             if step % args.ckpt_interval == 0:
-                accelerator.save_state(output_dir=f"ckpt-{step}")
+                accelerator.save_state(output_dir=osp.join(args.output_dir, f"ckpt-{step}"))
 
-    accelerator.save_model(model, "tlm-pro")
+        accelerator.save_state(output_dir=osp.join(args.output_dir, f"epoch-{epoch}"))
+
+    accelerator.save_model(model, osp.join(args.output_dir, "tlm-pro"))
 
     wandb.unwatch(model)
     wandb.finish()
