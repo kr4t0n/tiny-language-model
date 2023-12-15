@@ -3,7 +3,6 @@ import wandb
 import argparse
 import os.path as osp
 
-from dataclasses import dataclass
 from accelerate import Accelerator
 from torch.utils.data import DataLoader
 
