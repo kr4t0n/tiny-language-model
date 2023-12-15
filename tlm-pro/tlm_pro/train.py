@@ -27,6 +27,8 @@ args_parser.add_argument("--batch_size", type=int, default=32)
 args_parser.add_argument("--log_interval", type=int, default=10)
 args_parser.add_argument("--ckpt_interval", type=int, default=1000)
 args_parser.add_argument("--output_dir", type=str, default="./")
+args_parser.add_argument("--ckpt_dir", type=str, default=None)
+args_parser.add_argument("--ckpt_step", type=int, default=-1)
 args = args_parser.parse_args()
 
 
@@ -66,10 +68,14 @@ def main():
 
     dataloader, model, optimizer, scheduler = accelerator.prepare(dataloader, model, optimizer, scheduler)
 
+    # load checkpoint
+    if args.ckpt_dir is not None:
+        accelerator.load_state(args.ckpt_dir)
+
     wandb.init(project="tlm-pro")
     wandb.watch(model, model.loss_fn, log="all")
 
-    step = -1
+    step = args.ckpt_step
     for epoch in range(args.num_epochs):
         dataset.set_epoch(epoch=epoch)
 
