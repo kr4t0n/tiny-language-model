@@ -73,9 +73,9 @@ def main():
         accelerator.load_state(args.ckpt_dir)
 
     if accelerator.is_main_process:
-        pbar = tqdm(args.num_epochs * len(dataloader))
+        pbar = tqdm()
         wandb.init(project="tlm-pro")
-        wandb.watch(model, model.loss_fn, log="all")
+        wandb.watch(model, accelerator.unwrap_model(model).loss_fn, log="all")
 
     step = args.ckpt_step
     for epoch in range(args.num_epochs):
@@ -86,7 +86,7 @@ def main():
             optimizer.zero_grad()
 
             outputs = model(inputs)
-            loss = model.loss_fn(outputs, targets)
+            loss = accelerator.unwrap_model(model).loss_fn(outputs, targets)
 
             accelerator.backward(loss)
             optimizer.step()
@@ -105,7 +105,7 @@ def main():
             accelerator.save_state(output_dir=osp.join(args.output_dir, f"epoch-{epoch}"))
 
     if accelerator.is_main_process:
-        accelerator.save_model(model, osp.join(args.output_dir, "tlm-pro"))
+        accelerator.save_model(accelerator.unwrap_model(model), osp.join(args.output_dir, "tlm-pro"))
 
     if accelerator.is_main_process:
         pbar.close()
