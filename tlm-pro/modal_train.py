@@ -1,5 +1,6 @@
 import modal
 
+from typing import Optional
 from dataclasses import dataclass
 
 LOCAL_DIR = "./tlm_pro"
@@ -58,6 +59,8 @@ class TrainArguments:
     ckpt_interval: int = 800
 
     output_dir: str = REMOTE_VOL_DIR
+    ckpt_dir: Optional[str] = None
+    ckpt_step: int = -1
 
 
 @stub.function(
@@ -124,6 +127,10 @@ def modal_train():
             f"{args.ckpt_interval}",
             "--output_dir",
             f"{args.output_dir}",
+            "--ckpt_dir",
+            f"{args.ckpt_dir}",
+            "--ckpt_step",
+            f"{args.ckpt_step}",
         ],
         check=True,
     )
