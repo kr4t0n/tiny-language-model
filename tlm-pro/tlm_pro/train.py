@@ -3,6 +3,7 @@ import wandb
 import argparse
 import os.path as osp
 
+from tqdm.auto import tqdm
 from accelerate import Accelerator
 from torch.utils.data import DataLoader
 
@@ -34,7 +35,7 @@ args = args_parser.parse_args()
 def main():
     accelerator = Accelerator()
 
-    dataset, tokenizer, data_collator = prepare_data(
+    dataset, _, data_collator = prepare_data(
         dataset_name=args.dataset_name,
         tokenizer_name=args.tokenizer_name,
         max_length=args.max_length,
@@ -71,8 +72,10 @@ def main():
     if args.ckpt_dir is not None:
         accelerator.load_state(args.ckpt_dir)
 
-    wandb.init(project="tlm-pro")
-    wandb.watch(model, model.loss_fn, log="all")
+    if accelerator.is_main_process:
+        pbar = tqdm(args.num_epochs * len(dataloader))
+        wandb.init(project="tlm-pro")
+        wandb.watch(model, model.loss_fn, log="all")
 
     step = args.ckpt_step
     for epoch in range(args.num_epochs):
@@ -89,18 +92,25 @@ def main():
             optimizer.step()
             scheduler.step()
 
-            if step % args.log_interval == 0:
-                wandb.log({"train_loss": loss.item()}, step=step)
+            if accelerator.is_main_process:
+                if step % args.log_interval == 0:
+                    pbar.set_description(f"Epoch: {epoch}, step: {step}, loss: {loss.item()}")
+                    pbar.update(step)
+                    wandb.log({"train_loss": loss.item()}, step=step)
 
-            if step % args.ckpt_interval == 0:
-                accelerator.save_state(output_dir=osp.join(args.output_dir, f"ckpt-{step}"))
+                if step % args.ckpt_interval == 0:
+                    accelerator.save_state(output_dir=osp.join(args.output_dir, f"ckpt-{step}"))
 
-        accelerator.save_state(output_dir=osp.join(args.output_dir, f"epoch-{epoch}"))
+        if accelerator.is_main_process:
+            accelerator.save_state(output_dir=osp.join(args.output_dir, f"epoch-{epoch}"))
 
-    accelerator.save_model(model, osp.join(args.output_dir, "tlm-pro"))
+    if accelerator.is_main_process:
+        accelerator.save_model(model, osp.join(args.output_dir, "tlm-pro"))
 
-    wandb.unwatch(model)
-    wandb.finish()
+    if accelerator.is_main_process:
+        pbar.close()
+        wandb.unwatch(model)
+        wandb.finish()
 
 
 if __name__ == "__main__":
