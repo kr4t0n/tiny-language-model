@@ -1,0 +1,10 @@
+numpy
+scipy
+pandas
+torch
+sentencepiece
+transformers
+datasets
+accelerate
+tqdm
+wandb
