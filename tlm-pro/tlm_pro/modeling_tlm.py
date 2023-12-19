@@ -4,6 +4,7 @@ import torch.nn.functional as F
 
 from typing import Tuple
 from collections import OrderedDict
+from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 
 def get_rotary_matrix(context_length: int, d_model: int) -> torch.Tensor:
@@ -214,3 +215,25 @@ class TLM(nn.Module):
         loss = F.cross_entropy(yhat, y, ignore_index=-100)
 
         return loss
+
+    def generate(self, text: str, tokenizer: PreTrainedTokenizerBase, max_length: int, device: str) -> str:
+        input_ids = tokenizer(text)["input_ids"]
+
+        while len(input_ids) < max_length:
+            model_input_ids = tokenizer.pad(
+                {"input_ids": input_ids},
+                padding="max_length",
+                max_length=max_length,
+                return_tensors="pt",
+            )["input_ids"].unsqueeze(dim=0)
+
+            outputs = self.forward(model_input_ids.to(device)).detach()
+            outputs = outputs.argmax(dim=-1)[0]
+
+            last_output = outputs[len(input_ids) - 1]
+            input_ids.append(last_output.item())
+
+            if last_output == tokenizer.eos_token_id:
+                break
+
+        return tokenizer.decode(input_ids)
