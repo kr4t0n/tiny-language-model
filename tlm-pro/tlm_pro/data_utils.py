@@ -24,34 +24,22 @@ class TLMDataCollator:
         if return_tensors is None:
             return_tensors = self.return_tensors
 
-        labels = (
-            [feature["labels"] for feature in features]
-            if "labels" in features[0].keys()
-            else None
-        )
+        labels = [feature["labels"] for feature in features] if "labels" in features[0].keys() else None
 
         if labels is not None:
             max_label_length = self.max_length
 
             padding_side = self.tokenizer.padding_side
             for feature in features:
-                remainder = [self.label_pad_token_id] * (
-                    max_label_length - len(feature["labels"])
-                )
+                remainder = [self.label_pad_token_id] * (max_label_length - len(feature["labels"]))
                 if isinstance(feature["labels"], list):
                     feature["labels"] = (
-                        feature["labels"] + remainder
-                        if padding_side == "right"
-                        else remainder + feature["labels"]
+                        feature["labels"] + remainder if padding_side == "right" else remainder + feature["labels"]
                     )
                 elif padding_side == "right":
-                    feature["labels"] = np.concatenate(
-                        [feature["labels"], remainder]
-                    ).astype(np.int64)
+                    feature["labels"] = np.concatenate([feature["labels"], remainder]).astype(np.int64)
                 else:
-                    feature["labels"] = np.concatenate(
-                        [remainder, feature["labels"]]
-                    ).astype(np.int64)
+                    feature["labels"] = np.concatenate([remainder, feature["labels"]]).astype(np.int64)
 
         features = self.tokenizer.pad(
             features,
@@ -112,4 +100,4 @@ def prepare_data(dataset_name, tokenizer_name, max_length):
         return_tensors="pt",
     )
 
-    return tokenized_dataset, data_collator
+    return tokenized_dataset, tokenizer, data_collator

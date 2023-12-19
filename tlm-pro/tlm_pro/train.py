@@ -34,7 +34,7 @@ args = args_parser.parse_args()
 def main():
     accelerator = Accelerator()
 
-    dataset, data_collator = prepare_data(
+    dataset, tokenizer, data_collator = prepare_data(
         dataset_name=args.dataset_name,
         tokenizer_name=args.tokenizer_name,
         max_length=args.max_length,
