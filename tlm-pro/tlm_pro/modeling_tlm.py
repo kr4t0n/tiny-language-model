@@ -106,21 +106,14 @@ class RoPECausalAttention(nn.Module):
         k_rotated = torch.einsum("bhci,cij->bhcj", k, R)
 
         # calculate attention
-        attn_numerator = torch.exp(
-            (q_rotated @ k_rotated.transpose(-2, -1))
-            / torch.sqrt(torch.tensor(self.d_head))
-        )
-        attn_denominator = torch.exp(
-            (q @ k.transpose(-2, -1)) / torch.sqrt(torch.tensor(self.d_head))
-        )
+        attn_numerator = torch.exp((q_rotated @ k_rotated.transpose(-2, -1)) / torch.sqrt(torch.tensor(self.d_head)))
+        attn_denominator = torch.exp((q @ k.transpose(-2, -1)) / torch.sqrt(torch.tensor(self.d_head)))
         attn_denominator = torch.sum(attn_denominator, dim=-1, keepdim=True)
 
         attn = attn_numerator / attn_denominator
 
         # mask attention to make it causal
-        attn_mask = (
-            torch.tril(torch.ones(C, C)).view(1, 1, C, C).to(attn.device)
-        )
+        attn_mask = torch.tril(torch.ones(C, C)).view(1, 1, C, C).to(attn.device)
         attn = attn.masked_fill(attn_mask[:, :, :C, :C] == 0, 0.0)
 
         # batch_size, n_heads, context_length, d_heads
