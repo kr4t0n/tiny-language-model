@@ -2,9 +2,10 @@ import random
 import numpy as np
 
 from dataclasses import dataclass
-from typing import Union, Optional
+from typing import Union, Dict, Tuple, Any, Optional
 
 from datasets import load_dataset
+from datasets.iterable_dataset import IterableDataset
 from torch.utils.data import DataLoader
 from transformers import LlamaTokenizer
 from transformers.utils import PaddingStrategy
@@ -60,7 +61,11 @@ class TLMDataLoader(DataLoader):
         super().__init__(*args, **kwargs)
 
 
-def tokenize(data, tokenizer, max_length):
+def tokenize(
+    data: Dict[str, Any],
+    tokenizer: PreTrainedTokenizerBase,
+    max_length: int,
+) -> Dict[str, Any]:
     ids = tokenizer(data["text"])["input_ids"]
     ids.append(tokenizer.eos_token_id)
 
@@ -77,7 +82,11 @@ def tokenize(data, tokenizer, max_length):
     return res
 
 
-def prepare_data(dataset_name, tokenizer_name, max_length):
+def prepare_data(
+    dataset_name: str,
+    tokenizer_name: str,
+    max_length: int,
+) -> Tuple[PreTrainedTokenizerBase, IterableDataset, TLMDataCollator]:
     dataset = load_dataset(
         dataset_name,
         split="train",
