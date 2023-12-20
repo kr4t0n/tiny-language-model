@@ -3,7 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from typing import Tuple
-from collections import OrderedDict
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 
@@ -76,10 +75,14 @@ class SwiGLU(nn.Module):
 class RoPECausalAttention(nn.Module):
     def __init__(
         self,
+        context_length: int,
         d_model: int,
         n_heads: int,
+        dropout: float = 0.5,
     ) -> None:
         super().__init__()
+
+        assert d_model % n_heads == 0
 
         self.d_model = d_model
         self.n_heads = n_heads
@@ -87,6 +90,18 @@ class RoPECausalAttention(nn.Module):
 
         self.qkv = nn.Linear(d_model, 3 * d_model, bias=False)
         self.out = nn.Linear(d_model, d_model)
+
+        self.dropout = nn.Dropout(p=dropout)
+
+        # register rotary matrix and attention mask
+        self.register_buffer(
+            "R",
+            get_rotary_matrix(context_length, self.d_head),
+        )
+        self.register_buffer(
+            "attn_mask",
+            torch.tril(torch.ones(context_length, context_length)).view(1, 1, context_length, context_length),
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # batch_size, context_length, d_model
@@ -99,12 +114,9 @@ class RoPECausalAttention(nn.Module):
         k = k.view(B, C, self.n_heads, self.d_head).transpose(1, 2)
         v = v.view(B, C, self.n_heads, self.d_head).transpose(1, 2)
 
-        # get rotary matrix
-        R = get_rotary_matrix(C, self.d_head).to(q.device)
-
         # rotate q, k
-        q_rotated = torch.einsum("bhci,cij->bhcj", q, R)
-        k_rotated = torch.einsum("bhci,cij->bhcj", k, R)
+        q_rotated = torch.einsum("bhci,cij->bhcj", q, self.R)
+        k_rotated = torch.einsum("bhci,cij->bhcj", k, self.R)
 
         # calculate attention
         attn_numerator = torch.exp((q_rotated @ k_rotated.transpose(-2, -1)) / torch.sqrt(torch.tensor(self.d_head)))
@@ -114,8 +126,10 @@ class RoPECausalAttention(nn.Module):
         attn = attn_numerator / attn_denominator
 
         # mask attention to make it causal
-        attn_mask = torch.tril(torch.ones(C, C)).view(1, 1, C, C).to(attn.device)
-        attn = attn.masked_fill(attn_mask[:, :, :C, :C] == 0, 0.0)
+        attn = attn.masked_fill(self.attn_mask[:, :, :C, :C] == 0, 0.0)
+
+        # dropout
+        attn = self.dropout(attn)
 
         # batch_size, n_heads, context_length, d_heads
         y = attn @ v
@@ -126,7 +140,32 @@ class RoPECausalAttention(nn.Module):
         # out projection
         y = self.out(y)
 
+        # dropout
+        y = self.dropout(y)
+
         return y
+
+
+class MLP(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        dropout: float = 0.5,
+    ) -> None:
+        super().__init__()
+
+        self.fc = nn.Linear(d_model, 4 * d_model)
+        self.act = SwiGLU(4 * d_model)
+        self.proj = nn.Linear(4 * d_model, d_model)
+        self.dropout = nn.Dropout(p=dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.fc(x)
+        x = self.act(x)
+        x = self.proj(x)
+        x = self.dropout(x)
+
+        return x
 
 
 class TLMBlock(nn.Module):
@@ -139,27 +178,23 @@ class TLMBlock(nn.Module):
     ) -> None:
         super().__init__()
 
-        self.rms = RMSNorm((context_length, d_model))
-        self.attn = RoPECausalAttention(d_model, n_heads)
-
-        self.ffn = nn.Sequential(
-            nn.Linear(d_model, d_model),
-            SwiGLU(d_model),
-        )
-        self.dropout = nn.Dropout(p=dropout)
+        self.attn_rms = RMSNorm((context_length, d_model))
+        self.attn = RoPECausalAttention(context_length, d_model, n_heads, dropout=dropout)
+        self.ffn_rms = RMSNorm((context_length, d_model))
+        self.ffn = MLP(d_model, dropout=dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # pre-normalizatoin
-        x = self.rms(x)
+        x = self.attn_rms(x)
 
         # attention and skip connection
-        x = x + self.dropout(self.attn(x))
+        x = x + self.attn(x)
 
         # pre-normalization
-        x = self.rms(x)
+        x = self.ffn_rms(x)
 
-        # ffn, dropout and skip connection
-        x = x + self.dropout(self.ffn(x))
+        # ffn and skip connection
+        x = x + self.ffn(x)
 
         return x
 
@@ -176,35 +211,26 @@ class TLM(nn.Module):
     ) -> None:
         super().__init__()
 
-        self.embedding = nn.Embedding(vocab_size, d_model)
-        self.blocks = nn.Sequential(
-            OrderedDict(
-                [
-                    (
-                        f"TLMBlock_{i}",
-                        TLMBlock(
-                            context_length,
-                            d_model,
-                            n_heads,
-                            dropout=dropout,
-                        ),
-                    )
-                    for i in range(n_layers)
-                ]
+        self.tlm = nn.ModuleDict(
+            dict(
+                wte=nn.Embedding(vocab_size, d_model),
+                h=nn.ModuleList([TLMBlock(context_length, d_model, n_heads, dropout=dropout) for _ in range(n_layers)]),
+                ln_f=RMSNorm((context_length, d_model)),
             )
         )
-        self.out = nn.Sequential(
-            nn.Linear(d_model, d_model),
-            SwiGLU(d_model),
-            nn.Linear(d_model, d_model),
-            SwiGLU(d_model),
-            nn.Linear(d_model, vocab_size),
-        )
+        self.lm_head = nn.Linear(d_model, vocab_size)
+
+        print(f"number of parameteres: {(self._count_params() / 1e9):.2f}B.")
+
+    def _count_params(self) -> int:
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.embedding(x)
-        x = self.blocks(x)
-        x = self.out(x)
+        x = self.tlm.wte(x)
+        for block in self.tlm.h:
+            x = block(x)
+        x = self.tlm.ln_f(x)
+        x = self.lm_head(x)
 
         return x
 
