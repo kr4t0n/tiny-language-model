@@ -87,9 +87,14 @@ def prepare_data(
     tokenizer_name: str,
     max_length: int,
 ) -> Tuple[PreTrainedTokenizerBase, IterableDataset, TLMDataCollator]:
-    dataset = load_dataset(
+    train_dataset = load_dataset(
         dataset_name,
         split="train",
+        streaming=True,
+    )
+    valid_dataset = load_dataset(
+        dataset_name,
+        split="validation",
         streaming=True,
     )
     tokenizer = LlamaTokenizer.from_pretrained(
@@ -97,7 +102,12 @@ def prepare_data(
     )
     tokenizer.pad_token = tokenizer.eos_token
 
-    tokenized_dataset = dataset.map(
+    train_tokenized_dataset = train_dataset.map(
+        lambda x: tokenize(x, tokenizer, max_length),
+        remove_columns=["text"],
+        batched=False,
+    )
+    valid_tokenized_dataset = valid_dataset.map(
         lambda x: tokenize(x, tokenizer, max_length),
         remove_columns=["text"],
         batched=False,
@@ -109,4 +119,4 @@ def prepare_data(
         return_tensors="pt",
     )
 
-    return tokenized_dataset, tokenizer, data_collator
+    return train_tokenized_dataset, valid_tokenized_dataset, tokenizer, data_collator
