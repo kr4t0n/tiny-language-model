@@ -25,6 +25,8 @@ args_parser.add_argument("--weight_decay", type=float, default=1e-3)
 args_parser.add_argument("--num_epochs", type=int, default=10)
 args_parser.add_argument("--batch_size", type=int, default=32)
 args_parser.add_argument("--log_interval", type=int, default=10)
+args_parser.add_argument("--eval_interval", type=int, default=500)
+args_parser.add_argument("--eval_prompt", type=str, default="Once upon a time,")
 args_parser.add_argument("--ckpt_interval", type=int, default=1000)
 args_parser.add_argument("--output_dir", type=str, default="./")
 args_parser.add_argument("--ckpt_dir", type=str, default=None)
@@ -35,13 +37,19 @@ args = args_parser.parse_args()
 def main():
     accelerator = Accelerator()
 
-    dataset, _, data_collator = prepare_data(
+    train_dataset, valid_dataset, _, data_collator = prepare_data(
         dataset_name=args.dataset_name,
         tokenizer_name=args.tokenizer_name,
         max_length=args.max_length,
     )
-    dataloader = DataLoader(
-        dataset,
+    train_dataloader = DataLoader(
+        train_dataset,
+        collate_fn=data_collator,
+        batch_size=args.batch_size,
+        num_workers=4,
+    )
+    valid_dataloader = DataLoader(
+        valid_dataset,
         collate_fn=data_collator,
         batch_size=args.batch_size,
         num_workers=4,
@@ -66,7 +74,9 @@ def main():
         eta_min=args.min_learning_rate,
     )
 
-    dataloader, model, optimizer, scheduler = accelerator.prepare(dataloader, model, optimizer, scheduler)
+    train_dataloader, valid_dataloader, model, optimizer, scheduler = accelerator.prepare(
+        train_dataloader, valid_dataloader, model, optimizer, scheduler
+    )
 
     # load checkpoint
     if args.ckpt_dir is not None:
@@ -79,10 +89,12 @@ def main():
 
     step = args.ckpt_step
     for epoch in range(args.num_epochs):
-        dataset.set_epoch(epoch=epoch)
+        train_dataset.set_epoch(epoch=epoch)
 
-        for inputs, targets in dataloader:
+        for inputs, targets in train_dataloader:
             step += 1
+
+            model.train()
             optimizer.zero_grad()
 
             outputs = model(inputs)
@@ -92,11 +104,38 @@ def main():
             optimizer.step()
             scheduler.step()
 
+            if step % args.eval_interval == 0:
+                model.eval()
+
+                valid_loss, valid_n = 0.0, 0
+                for valid_inputs, valid_targets in valid_dataloader:
+                    valid_outputs = model(valid_inputs)
+                    loss = accelerator.unwrap_model(model).loss_fn(valid_outputs, valid_targets)
+
+                    valid_n += valid_inputs.shape[0]
+                    valid_loss += loss.item() * valid_n
+
+                valid_loss = valid_loss / valid_n
+
             if accelerator.is_main_process:
                 if step % args.log_interval == 0:
                     pbar.set_description(f"Epoch: {epoch}, step: {step}, loss: {loss.item()}")
                     pbar.update(step)
                     wandb.log({"train_loss": loss.item()}, step=step)
+
+                if step % args.eval_interval == 0:
+                    wandb.log({"valid_loss": valid_loss.item()}, step=step)
+
+                    eval_generation = model.generate(args.eval_prompt)
+                    wandb.log(
+                        {
+                            "generations": wandb.Table(
+                                columns=["prompt", "generation"],
+                                data=[[args.eval_prompt, eval_generation]],
+                            )
+                        },
+                        step=step,
+                    )
 
                 if step % args.ckpt_interval == 0:
                     accelerator.save_state(output_dir=osp.join(args.output_dir, f"ckpt-{step}"))
