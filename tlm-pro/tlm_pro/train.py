@@ -126,7 +126,7 @@ def main():
                 if step % args.eval_interval == 0:
                     wandb.log({"valid_loss": valid_loss}, step=step)
 
-                    eval_generation = model.generate(args.eval_prompt)
+                    eval_generation = accelerator.unwrap_model(model).generate(args.eval_prompt)
                     wandb.log(
                         {
                             "generations": wandb.Table(
