@@ -86,15 +86,16 @@ def prepare_data(
     dataset_name: str,
     tokenizer_name: str,
     max_length: int,
+    percent: str = "100%",
 ) -> Tuple[PreTrainedTokenizerBase, IterableDataset, TLMDataCollator]:
     train_dataset = load_dataset(
         dataset_name,
-        split="train",
+        split=f"train[:{percent}]",
         streaming=True,
     )
     valid_dataset = load_dataset(
         dataset_name,
-        split="validation",
+        split=f"validation[:{percent}]",
         streaming=True,
     )
     tokenizer = LlamaTokenizer.from_pretrained(
