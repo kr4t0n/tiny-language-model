@@ -37,7 +37,7 @@ args = args_parser.parse_args()
 def main():
     accelerator = Accelerator()
 
-    train_dataset, valid_dataset, _, data_collator = prepare_data(
+    train_dataset, valid_dataset, tokenizer, data_collator = prepare_data(
         dataset_name=args.dataset_name,
         tokenizer_name=args.tokenizer_name,
         max_length=args.max_length,
@@ -126,7 +126,12 @@ def main():
                 if step % args.eval_interval == 0:
                     wandb.log({"valid_loss": valid_loss}, step=step)
 
-                    eval_generation = accelerator.unwrap_model(model).generate(args.eval_prompt)
+                    eval_generation = accelerator.unwrap_model(model).generate(
+                        args.eval_prompt,
+                        tokenizer,
+                        max_length=args.max_length,
+                        device=accelerator.device,
+                    )
                     wandb.log(
                         {
                             "generations": wandb.Table(
