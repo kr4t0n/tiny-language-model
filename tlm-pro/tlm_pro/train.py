@@ -124,7 +124,7 @@ def main():
                     wandb.log({"train_loss": loss.item()}, step=step)
 
                 if step % args.eval_interval == 0:
-                    wandb.log({"valid_loss": valid_loss.item()}, step=step)
+                    wandb.log({"valid_loss": valid_loss}, step=step)
 
                     eval_generation = model.generate(args.eval_prompt)
                     wandb.log(
