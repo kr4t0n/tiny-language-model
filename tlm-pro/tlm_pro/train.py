@@ -12,7 +12,6 @@ from data_utils import prepare_data
 
 args_parser = argparse.ArgumentParser("tlm-pro")
 args_parser.add_argument("--dataset_name", type=str, default="roneneldan/TinyStories")
-args_parser.add_argument("--dataset_percent", type=str, default="100%")
 args_parser.add_argument("--tokenizer_name", type=str, default="meta-llama/Llama-2-7b")
 args_parser.add_argument("--vocab_size", type=int, default=32000)
 args_parser.add_argument("--max_length", type=int, default=512)
@@ -42,7 +41,6 @@ def main():
         dataset_name=args.dataset_name,
         tokenizer_name=args.tokenizer_name,
         max_length=args.max_length,
-        percent=args.dataset_percent,
     )
     train_dataloader = DataLoader(
         train_dataset,
