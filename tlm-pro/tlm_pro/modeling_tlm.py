@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from typing import Tuple
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 
@@ -28,24 +27,22 @@ def get_rotary_matrix(context_length: int, d_model: int) -> torch.Tensor:
 class RMSNorm(nn.Module):
     def __init__(
         self,
-        features: Tuple[int, int],
+        dim: int,
         bias: bool = True,
         eps: float = 1e-8,
     ) -> None:
         super().__init__()
 
-        self.weight = nn.Parameter(torch.ones(features))
-
+        self.weight = nn.Parameter(torch.ones(dim))
         if bias:
-            self.bias = nn.Parameter(torch.zeros(features))
+            self.bias = nn.Parameter(torch.zeros(dim))
         else:
             self.register_parameter("bias", None)
 
         self.eps = eps
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        rms = torch.sqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
-        x = x / rms
+        x = x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
 
         x = self.weight * x
         if self.bias is not None:
@@ -79,6 +76,7 @@ class RoPECausalAttention(nn.Module):
         d_model: int,
         n_heads: int,
         dropout: float = 0.5,
+        eps: float = 1e-8,
     ) -> None:
         super().__init__()
 
@@ -92,6 +90,7 @@ class RoPECausalAttention(nn.Module):
         self.out = nn.Linear(d_model, d_model)
 
         self.dropout = nn.Dropout(p=dropout)
+        self.eps = eps
 
         # register rotary matrix and attention mask
         self.register_buffer(
@@ -115,12 +114,16 @@ class RoPECausalAttention(nn.Module):
         v = v.view(B, C, self.n_heads, self.d_head).transpose(1, 2)
 
         # rotate q, k
-        q_rotated = torch.einsum("bhci,cij->bhcj", q, self.R)
-        k_rotated = torch.einsum("bhci,cij->bhcj", k, self.R)
+        q_rotated = torch.einsum("bhci,cij->bhcj", q, self.R[:C, :])
+        k_rotated = torch.einsum("bhci,cij->bhcj", k, self.R[:C, :])
 
         # calculate attention
-        attn_numerator = torch.exp((q_rotated @ k_rotated.transpose(-2, -1)) / torch.sqrt(torch.tensor(self.d_head)))
-        attn_denominator = torch.exp((q @ k.transpose(-2, -1)) / torch.sqrt(torch.tensor(self.d_head)))
+        attn_numerator = torch.exp(
+            (q_rotated @ k_rotated.transpose(-2, -1)) * torch.rsqrt(torch.tensor(self.d_head) + self.eps),
+        )
+        attn_denominator = torch.exp(
+            (q @ k.transpose(-2, -1)) * torch.rsqrt(torch.tensor(self.d_head) + self.eps),
+        )
         attn_denominator = torch.sum(attn_denominator, dim=-1, keepdim=True)
 
         attn = attn_numerator / attn_denominator
@@ -178,9 +181,9 @@ class TLMBlock(nn.Module):
     ) -> None:
         super().__init__()
 
-        self.attn_rms = RMSNorm((context_length, d_model))
+        self.attn_rms = RMSNorm(d_model)
         self.attn = RoPECausalAttention(context_length, d_model, n_heads, dropout=dropout)
-        self.ffn_rms = RMSNorm((context_length, d_model))
+        self.ffn_rms = RMSNorm(d_model)
         self.ffn = MLP(d_model, dropout=dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -203,8 +206,8 @@ class TLM(nn.Module):
     def __init__(
         self,
         vocab_size: int,
-        n_layers: int,
         context_length: int,
+        n_layers: int,
         d_model: int,
         n_heads: int,
         dropout: float = 0.5,
@@ -215,7 +218,7 @@ class TLM(nn.Module):
             dict(
                 wte=nn.Embedding(vocab_size, d_model),
                 h=nn.ModuleList([TLMBlock(context_length, d_model, n_heads, dropout=dropout) for _ in range(n_layers)]),
-                ln_f=RMSNorm((context_length, d_model)),
+                ln_f=RMSNorm(d_model),
             )
         )
         self.lm_head = nn.Linear(d_model, vocab_size)
